@@ -17,6 +17,7 @@ from .collation import (
     relationships,
 )
 from .fragments import assemble_fragments
+from .order_evidence import MAX_ORDER_CLAIMS, OrderEvidenceError, analyze_order_evidence
 
 MAX_POINTS = 300
 MIN_WITNESSES = 2
@@ -91,6 +92,17 @@ class FragmentIn(BaseModel):
 
 class FragmentsRequest(BaseModel):
     fragments: list[FragmentIn]
+
+
+class OrderClaimIn(BaseModel):
+    # 「before 先于 after」：页名须为当前残页名（录入即去空白）
+    before: str
+    after: str
+
+
+class OrderEvidenceRequest(BaseModel):
+    fragments: list[FragmentIn]
+    claims: list[OrderClaimIn] = Field(default_factory=list)
 
 
 def _validate(base: str, witnesses: list[WitnessIn]):
@@ -262,6 +274,29 @@ def api_fragments(req: FragmentsRequest):
             for f in fragments
         ],
         "assembly": result,
+    }
+
+
+@app.post("/api/order-evidence")
+def api_order_evidence(req: OrderEvidenceRequest):
+    # 沿用残页拼合的同一套残页校验与名称、录入顺序
+    fragments = _validate_fragments(req.fragments)
+    claims = [{"before": c.before.strip(), "after": c.after.strip()} for c in req.claims]
+    if len(claims) > MAX_ORDER_CLAIMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"主张数量最多为 {MAX_ORDER_CLAIMS} 条（当前 {len(claims)} 条）",
+        )
+    try:
+        result = analyze_order_evidence(fragments, claims)
+    except OrderEvidenceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "fragments": [
+            {"index": i + 1, "name": f["name"], "text": f["text"], "length": len(f["text"])}
+            for i, f in enumerate(fragments)
+        ],
+        "order_evidence": result,
     }
 
 

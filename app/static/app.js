@@ -9,6 +9,7 @@ const MAX_WITNESSES = 4;
 const MIN_FRAGMENTS = 2;
 const MAX_FRAGMENTS = 8;
 const MAX_FRAGMENT_POINTS = 100;
+const MAX_ORDER_CLAIMS = 20;
 
 const KIND_LABEL = {
   match: "相同",
@@ -41,6 +42,14 @@ const FRAGMENT_STATUS_LABEL = {
   duplicate: "同文重复（录入较晚）",
 };
 
+// 次序示例：沿用残页拼合示例的五张残页（甲乙丙丁戊）。
+// 甲→乙→丙 成链；甲、乙均先于丙；戊只与甲同文，与各页无先后——戊对各页均未定。
+const ORDER_CLAIM_EXAMPLE = [
+  ["残页甲", "残页乙"],
+  ["残页乙", "残页丙"],
+  ["残页丁", "残页乙"],
+];
+
 let lastResult = null;
 let lastInput = null; // 最近一次对读的 {base, witnesses}，供校定请求复用
 let selections = {}; // "type:index" -> 所选读法；仅存非默认选择
@@ -51,7 +60,9 @@ let lastAudit = null;
 let lastWindow = null;
 let lastBlockMove = null;
 let lastAssembly = null;
+let lastOrder = null; // 残页次序证据最近一次分析结果
 let fragmentToken = 0; // 残页拼合独立于对读，单独维护过期响应标记
+let orderToken = 0; // 残页次序证据的在途请求标记（随残页或主张变化自增）
 let editionTimer = null;
 let editionReqId = 0;
 let runToken = 0; // 每次发起对读或清空结果时自增，用于丢弃过期响应
@@ -1236,10 +1247,12 @@ function addFragmentRow(name = "", text = "") {
     }
     row.remove();
     refreshFragmentRows();
+    refreshClaimRows();
     clearFragmentResult();
   });
   list.appendChild(row);
   refreshFragmentRows();
+  refreshClaimRows();
   // 新增残页行即输入变化，旧拼合结果立即失效
   clearFragmentResult();
 }
@@ -1271,7 +1284,9 @@ function validateFragments(fragments) {
 }
 
 function clearFragmentResult() {
+  // 残页变化（增删、改名、改文）同时使拼合结果与次序证据失效
   fragmentToken += 1; // 作废在途拼合请求
+  clearOrderResult();
   lastAssembly = null;
   $("#fragment-result").classList.add("hidden");
   $("#fragment-error").classList.add("hidden");
@@ -1422,7 +1437,312 @@ function fillFragmentExample() {
   $("#fragment-list").innerHTML = "";
   FRAGMENT_EXAMPLE.forEach((f) => addFragmentRow(f.name, f.text));
   refreshFragmentRows();
+  // 示例残页与现有主张页名无关：旧主张一并清空
+  $("#claim-list").innerHTML = "";
+  refreshClaimRows();
   clearFragmentResult();
+}
+
+/* ---------- 残页次序证据（沿用残页拼合的残页列表） ---------- */
+
+function fragmentNames() {
+  return [...document.querySelectorAll("#fragment-list .fragment-row")].map(
+    (row) => row.querySelector(".f-name").value.trim()
+  );
+}
+
+function addClaimRow(before = "", after = "") {
+  const list = $("#claim-list");
+  if (list.children.length >= MAX_ORDER_CLAIMS) return;
+  const row = document.createElement("div");
+  row.className = "claim-row";
+  row.innerHTML = `
+    <span class="c-index">主张</span>
+    <select class="c-before" aria-label="在先残页"></select>
+    <span class="c-rel">先于</span>
+    <select class="c-after" aria-label="在后残页"></select>
+    <button type="button" class="btn btn-small btn-remove">删除</button>
+  `;
+  row.querySelector(".btn-remove").addEventListener("click", () => {
+    row.remove();
+    refreshClaimRows();
+    // 删改主张即输入变化，旧分析结果立即失效
+    clearOrderResult();
+  });
+  list.appendChild(row);
+  refreshClaimRows();
+  const names = fragmentNames();
+  row.querySelector(".c-before").value = before && names.includes(before)
+    ? before
+    : names[0] || "";
+  row.querySelector(".c-after").value = after && names.includes(after)
+    ? after
+    : names[1] || names[0] || "";
+  // 新增主张行即输入变化，旧分析结果立即失效
+  clearOrderResult();
+}
+
+function refreshClaimRows() {
+  const names = fragmentNames();
+  const rows = [...document.querySelectorAll("#claim-list .claim-row")];
+  rows.forEach((row, i) => {
+    row.querySelector(".c-index").textContent = `主张 ${i + 1}`;
+    const beforeSel = row.querySelector(".c-before");
+    const afterSel = row.querySelector(".c-after");
+    for (const sel of [beforeSel, afterSel]) {
+      const current = sel.value;
+      sel.innerHTML = "";
+      names.forEach((name, k) => {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = `${k + 1} ${name}`;
+        sel.appendChild(opt);
+      });
+      // 名称仍存在则保留原选择，否则落到第一页
+      sel.value = names.includes(current) ? current : names[0] || "";
+    }
+  });
+  $("#btn-add-claim").disabled = rows.length >= MAX_ORDER_CLAIMS;
+}
+
+function clearOrderResult() {
+  orderToken += 1; // 作废在途分析请求
+  lastOrder = null;
+  $("#order-result").classList.add("hidden");
+  $("#order-error").classList.add("hidden");
+  $("#order-error").textContent = "";
+  $("#order-cycle").innerHTML = "";
+  $("#order-cycle").classList.add("hidden");
+  $("#order-pairs").innerHTML = "";
+  document.querySelectorAll(".fragment-row.frag-active").forEach((el) =>
+    el.classList.remove("frag-active")
+  );
+  document.querySelectorAll(".claim-row.claim-active").forEach((el) =>
+    el.classList.remove("claim-active")
+  );
+}
+
+function showOrderError(msg) {
+  const el = $("#order-error");
+  el.textContent = msg;
+  el.classList.remove("hidden");
+}
+
+function clearOrderError() {
+  const el = $("#order-error");
+  el.textContent = "";
+  el.classList.add("hidden");
+}
+
+function collectOrderInput() {
+  const fragments = [...document.querySelectorAll("#fragment-list .fragment-row")]
+    .map((row) => ({
+      name: row.querySelector(".f-name").value.trim(),
+      text: row.querySelector(".f-text").value,
+    }));
+  const claims = [...document.querySelectorAll("#claim-list .claim-row")].map((row) => ({
+    before: row.querySelector(".c-before").value,
+    after: row.querySelector(".c-after").value,
+  }));
+  return { fragments, claims };
+}
+
+async function doAnalyzeOrder() {
+  clearOrderError();
+  const { fragments, claims } = collectOrderInput();
+
+  // 残页与拼合同规则；前端先拦一道，服务端仍会做完整校验
+  const err = validateFragments(fragments);
+  if (err) {
+    showOrderError(err);
+    return;
+  }
+
+  const token = ++orderToken;
+  let data;
+  try {
+    const resp = await fetch("/api/order-evidence", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fragments, claims }),
+    });
+    data = await resp.json();
+    if (!resp.ok) {
+      if (token === orderToken) showOrderError(data.detail || "服务器校验失败。");
+      return;
+    }
+  } catch (e) {
+    showOrderError("无法连接服务器，请确认后端已启动。");
+    return;
+  }
+  if (token !== orderToken) return; // 残页或主张已变化，丢弃过期结果
+
+  lastOrder = data;
+  renderOrderEvidence(data);
+}
+
+function pageRefText(ref) {
+  return `残页 ${ref.index} ${ref.name}`;
+}
+
+// 主张徽章：序号＋「A 先于 B」，点击定位主张行与两端残页
+function buildClaimChip(claim) {
+  const chip = document.createElement("span");
+  chip.className = "claim-chip";
+  chip.textContent = `#${claim.index} ${claim.before.name}→${claim.after.name}`;
+  chip.title = `主张 ${claim.index}：${pageRefText(claim.before)} 先于 ${pageRefText(claim.after)}（点击定位）`;
+  chip.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    locateClaim(claim.index, claim.before.index, claim.after.index);
+  });
+  return chip;
+}
+
+function renderOrderEvidence(data) {
+  const oe = data.order_evidence;
+  const box = $("#order-result");
+  box.classList.remove("hidden");
+
+  $("#order-summary").textContent =
+    `残页 ${data.fragments.length} 张 · 主张 ${oe.claim_count} 条`;
+
+  const cycleBox = $("#order-cycle");
+  const pairsBox = $("#order-pairs");
+  cycleBox.innerHTML = "";
+  pairsBox.innerHTML = "";
+  cycleBox.classList.add("hidden");
+
+  if (!oe.acyclic) {
+    renderOrderCycle(oe.cycle, cycleBox);
+  } else {
+    renderOrderPairs(oe.pairs, pairsBox);
+  }
+  box.scrollIntoView({ behavior: "smooth", "block": "start" });
+}
+
+function renderOrderCycle(cycle, cycleBox) {
+  cycleBox.classList.remove("hidden");
+  const head = document.createElement("div");
+  head.className = "cycle-head";
+  head.textContent = `存在冲突闭环：${cycle.edge_count} 条主张首尾相衔（边数最少；并列已按主张序号序列取字典序最小）`;
+  cycleBox.appendChild(head);
+
+  const chain = document.createElement("div");
+  chain.className = "cycle-chain";
+  cycle.claims.forEach((claim) => chain.appendChild(buildClaimChip(claim)));
+  cycleBox.appendChild(chain);
+
+  const close = document.createElement("div");
+  close.className = "cycle-close";
+  close.textContent =
+    `闭环页序：${cycle.pages.map((p) => `${p.index} ${p.name}`).join(" → ")}` +
+    ` → ${cycle.pages[0].index} ${cycle.pages[0].name}`;
+  cycleBox.appendChild(close);
+}
+
+function renderOrderPairs(pairs, pairsBox) {
+  const head = document.createElement("div");
+  head.className = "prov-head";
+  head.textContent = "逐对结论（点击整行可定位两端残页与证明链主张）";
+  pairsBox.appendChild(head);
+
+  const list = document.createElement("ol");
+  list.className = "order-pairs-list";
+  for (const p of pairs) {
+    const li = document.createElement("li");
+    li.className = "order-pair";
+    if (p.status === "undecided") {
+      li.classList.add("pair-undecided");
+      li.innerHTML =
+        `<span class="pair-names">${pageRefText(p.a)} ／ ${pageRefText(p.b)}</span>`;
+      const tag = document.createElement("span");
+      tag.className = "pair-status pair-undecided-tag";
+      tag.textContent = "未定（现有主张无法推出先后）";
+      li.appendChild(tag);
+    } else {
+      li.classList.add("pair-ordered");
+      const names = document.createElement("span");
+      names.className = "pair-names";
+      names.textContent = `${pageRefText(p.earlier)} 先于 ${pageRefText(p.later)}`;
+      const tag = document.createElement("span");
+      tag.className = "pair-status pair-ordered-tag";
+      tag.textContent = `必然先后 · 最短证明 ${p.claim_count} 条主张`;
+      li.append(names, tag);
+
+      const chain = document.createElement("div");
+      chain.className = "pair-proof";
+      p.proof.forEach((claim) => chain.appendChild(buildClaimChip(claim)));
+      li.appendChild(chain);
+
+      const claimIndices = p.proof.map((c) => c.index);
+      li.addEventListener("click", () =>
+        locatePair(p.earlier.index, p.later.index, claimIndices)
+      );
+    }
+    list.appendChild(li);
+  }
+  pairsBox.appendChild(list);
+}
+
+/* ---------- 次序证据：点击定位 ---------- */
+
+function clearOrderHighlights() {
+  document.querySelectorAll(".fragment-row.frag-active").forEach((el) =>
+    el.classList.remove("frag-active")
+  );
+  document.querySelectorAll(".claim-row.claim-active").forEach((el) =>
+    el.classList.remove("claim-active")
+  );
+}
+
+function highlightFragments(indices) {
+  document.querySelectorAll("#fragment-list .fragment-row").forEach((row, i) => {
+    if (indices.includes(i + 1)) row.classList.add("frag-active");
+  });
+}
+
+function highlightClaims(indices) {
+  document.querySelectorAll("#claim-list .claim-row").forEach((row, i) => {
+    if (indices.includes(i + 1)) row.classList.add("claim-active");
+  });
+}
+
+function locateClaim(claimIndex, beforeFragment, afterFragment) {
+  clearOrderHighlights();
+  highlightFragments([beforeFragment, afterFragment]);
+  highlightClaims([claimIndex]);
+  const claimEl = document.querySelector(
+    `#claim-list .claim-row.claim-active`
+  );
+  if (claimEl) claimEl.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function locatePair(earlierIndex, laterIndex, claimIndices) {
+  clearOrderHighlights();
+  highlightFragments([earlierIndex, laterIndex]);
+  highlightClaims(claimIndices);
+  const first = document.querySelector("#claim-list .claim-row.claim-active");
+  if (first) {
+    first.scrollIntoView({ behavior: "smooth", block: "center" });
+  } else {
+    const fragEl = document.querySelector("#fragment-list .fragment-row.frag-active");
+    if (fragEl) fragEl.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}
+
+function fillOrderExample() {
+  // 次序示例依赖残页拼合示例的页名；若页名不符则连残页一并填入
+  const names = fragmentNames();
+  const needed = ORDER_CLAIM_EXAMPLE.flat();
+  if (!needed.every((n) => names.includes(n))) {
+    $("#fragment-list").innerHTML = "";
+    FRAGMENT_EXAMPLE.forEach((f) => addFragmentRow(f.name, f.text));
+    refreshFragmentRows();
+  }
+  $("#claim-list").innerHTML = "";
+  ORDER_CLAIM_EXAMPLE.forEach(([before, after]) => addClaimRow(before, after));
+  refreshClaimRows();
+  clearOrderResult();
 }
 
 /* ---------- JSON 下载 ---------- */
@@ -1509,17 +1829,27 @@ function init() {
   $("#base-counter").textContent = `0/${MAX_POINTS}`;
   $("#query-counter").textContent = `0/${MAX_POINTS}`;
 
-  // 残页拼合：独立录入区，任一输入变化即清空旧结果并作废在途请求。
-  $("#fragment-section").addEventListener("input", (ev) => {
+  // 残页拼合：独立录入区，残页任一输入变化即同时清空拼合与次序证据结果，
+  // 并作废在途请求。
+  $("#fragment-list").addEventListener("input", (ev) => {
     if (ev.target.classList.contains("f-text")) refreshFragmentRows();
+    if (ev.target.classList.contains("f-name")) refreshClaimRows();
     clearFragmentResult();
   });
+  // 主张变化（改选）只清空次序证据，不影响拼合结果
+  $("#claim-list").addEventListener("input", () => clearOrderResult());
   $("#btn-add-fragment").addEventListener("click", () => addFragmentRow());
   $("#btn-fragment-example").addEventListener("click", fillFragmentExample);
   $("#btn-assemble").addEventListener("click", doAssemble);
 
+  // 残页次序证据
+  $("#btn-add-claim").addEventListener("click", () => addClaimRow());
+  $("#btn-order-example").addEventListener("click", fillOrderExample);
+  $("#btn-analyze-order").addEventListener("click", doAnalyzeOrder);
+
   addFragmentRow();
   addFragmentRow();
+  addClaimRow();
 }
 
 document.addEventListener("DOMContentLoaded", init);

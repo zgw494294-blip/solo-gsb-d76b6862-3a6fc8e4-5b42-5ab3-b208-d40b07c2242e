@@ -9,10 +9,11 @@
 <body>
   <header>
     <h1>异文对读台</h1>
-    <p class="subtitle">以底本为坐标，对读 2～4 份具名抄本；按全局最小编辑距离对齐，逐字列出异文，并对一份待鉴文本做来源分段、构造抄本异文距离树、截取最短抄本鉴别片段、定位单次片段搬移。</p>
+    <p class="subtitle">以底本为坐标，对读 2～4 份具名抄本；按全局最小编辑距离对齐，逐字列出异文，并对一份待鉴文本做来源分段、构造抄本异文距离树、截取最短抄本鉴别片段、定位单次片段搬移。另有与对读相互独立的残页拼合与残页次序证据模块。</p>
     <nav class="top-nav">
       <a href="#input-section">异文对读</a>
       <a href="#fragment-section">残页拼合</a>
+      <a href="#order-evidence">残页次序证据</a>
     </nav>
   </header>
 
@@ -135,6 +136,28 @@
 
         <h3>残页定位</h3>
         <ol id="fragment-locate" class="fragment-locate"></ol>
+      </div>
+
+      <div class="order-box" id="order-evidence">
+        <h3>残页次序证据</h3>
+        <p class="edition-hint">沿用上方当前 2～8 张残页的名称与录入顺序，录入最多 20 条「A 先于 B」的主张（拒绝自指、同向重复及未知页名）；残页文字重叠不算先后证据。服务端把主张视作有向边：有环时给出边数最少的冲突闭环（并列取旋转后主张序号序列字典序最小者）；无环时逐对判定必然先后并给出主张数最少的证明链，无法推出标为未定。点击结果可定位相关残页与主张。</p>
+
+        <div id="claim-list"></div>
+
+        <div class="btn-row">
+          <button id="btn-add-claim" class="btn" type="button">＋ 添加主张</button>
+          <button id="btn-order-example" class="btn" type="button">填入次序示例</button>
+          <button id="btn-analyze-order" class="btn btn-primary" type="button">分析次序</button>
+        </div>
+        <div id="order-error" class="error hidden"></div>
+
+        <div id="order-result" class="order-result hidden">
+          <div class="result-bar">
+            <span id="order-summary"></span>
+          </div>
+          <div id="order-cycle" class="order-cycle hidden"></div>
+          <div id="order-pairs" class="order-pairs"></div>
+        </div>
       </div>
     </section>
   </main>

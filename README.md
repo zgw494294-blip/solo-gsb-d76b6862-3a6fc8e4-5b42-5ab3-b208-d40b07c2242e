@@ -12,7 +12,9 @@
 判断抄本文字能否由底本一次连续片段搬移得到，给出底本片段区间、插入索引、
 片段在抄本中的新区间与搬移后全文。另有与对读相互独立的**残页拼合**模块：
 录入 2～8 张具名残页，按前页后缀与后页前缀的最长重叠拼成码点数最少的全文，
-并逐张定位最早出现区间。
+并逐张定位最早出现区间；以及同样独立的**残页次序证据**模块：沿用残页名称与
+录入顺序录入最多 20 条「A 先于 B」的主张，检测边数最少的冲突闭环，或逐对推导
+必然先后及主张数最少的证明链。
 
 - 后端：Python + FastAPI
 - 前端：原生 HTML / CSS / JavaScript（无构建步骤）
@@ -185,11 +187,31 @@ http://localhost:8000/docs 。
 - **任一残页录入（增删、改名、改文）变化，旧拼合结果立即清空**；在途请求的
   过期响应同样作废。
 
+## 残页次序证据
+
+- 与拼合同处一页、与对读模块**相互独立**：**沿用当前 2～8 张残页的名称与
+  录入顺序**，另录入最多 **20 条**「A 先于 B」的主张（0 条亦可）。主张
+  两端均为下拉选择当前残页；**自指、同向重复与未知页名一律返回 400**
+  （反向主张不属同向重复，将作为二环参与分析）。
+- **文字重叠不算先后证据**：分析只读取残页名称，残页文字完全不参与。
+- 服务端把每条主张视作一条有向边：
+  - **有环时**返回**边数最少的冲突闭环**（简单有向环）；并列时把每个闭环
+    从其**最小主张序号**起旋转，取主张序号序列**字典序最小**者。闭环给出
+    旋转后的主张序列（含主张序号与两端页）及首尾相接的环页序列。
+  - **无环时**按录入序号逐对列出结论：一方可沿主张边到达另一方即为
+    **必然先后**，证明链取**主张数最少**者，同长按主张序号序列（自先者
+    向后者排列）**字典序最小**；互不可达标为**未定**。
+- 页面可随时**增删主张**（端点下拉随残页改名同步）；**点击闭环或证明链中
+  的主张**即定位并高亮该主张行与两端残页，**点击某对结论整行**则高亮两端
+  残页与其证明链全部主张。
+- **任一残页变化（增删、改名、改文）或主张变化（增删、改选），旧分析结果
+  立即清空**；在途请求的过期响应同样作废。
+
 ## 对齐快照缓存
 
 - 其中六个接口（对读、校定、来源分段、距离树、路径审计、最短鉴别片段）
-  共享同一**进程内**对齐快照缓存；**单次片段搬移定位与残页拼合均不依赖
-  编辑对齐，不经该缓存**。缓存以**原样的 (底本, 文本)** 为键，保存该次对齐的
+  共享同一**进程内**对齐快照缓存；**单次片段搬移定位、残页拼合与残页次序
+  证据均不依赖编辑对齐，不经该缓存**。缓存以**原样的 (底本, 文本)** 为键，保存该次对齐的
   **最小代价表、字典序首条路径及其坐标读法**；路径计数与严格次小路径
   仍基于缓存的代价表逐请求现算，结果与无缓存一致。
 - **抄本名不进入键**：同文不同名的抄本共享同一快照，响应仍按各自录入
@@ -400,15 +422,54 @@ http://localhost:8000/docs 。
     **最早出现**的 Unicode 码点半开区间 `[start, end)`；三类残页均给出）。
 - `/api/fragments` 返回的全文、拼接顺序与区间与页面「残页拼合」区完全一致。
 
+`POST /api/order-evidence`
+
+```json
+{
+  "fragments": [
+    {"name": "残页甲", "text": "道可道，非常"},
+    {"name": "残页乙", "text": "非常名，无名"},
+    {"name": "残页丙", "text": "名，无名天地之始"},
+    {"name": "残页丁", "text": "非常名"},
+    {"name": "残页戊", "text": "道可道，非常"}
+  ],
+  "claims": [
+    {"before": "残页甲", "after": "残页乙"},
+    {"before": "残页乙", "after": "残页丙"},
+    {"before": "残页丁", "after": "残页乙"}
+  ]
+}
+```
+
+- 残页沿用 `/api/fragments` 的同一套校验（2～8 张、名称非空不重复、
+  每张 1～100 个 Unicode 码点），不合法返回 400；`claims` 0～20 条，
+  端点须为当前残页名，**自指、同向重复、未知页名或超过 20 条一律 400**。
+- 响应含 `fragments`（回显：`index`（1 起录入序号）／`name`／`text`／
+  `length`）与 `order_evidence`：
+  - `claims[]` 按主张录入顺序回显每条主张的 `index`（1 起）与
+    `before`／`after`（各含端点页的 `index` 与 `name`）。
+  - **有环时** `acyclic` 为 `false`，`pairs` 为 `null`，`cycle` 含
+    `edge_count`（闭环边数＝边数最少者）、`claims[]`（**从最小主张序号
+    起旋转**后的主张序列，字段同回显）与 `pages[]`（与之首尾相接的环页
+    序列，各含 `index`／`name`；末页回到首页）。
+  - **无环时** `acyclic` 为 `true`，`cycle` 为 `null`，`pairs[]` 按录入
+    序号 i<j 逐对给出 `a`／`b`、`status`（`"ordered"`／`"undecided"`）：
+    可推出时含 `earlier`／`later`、`claim_count`（证明链主张数，取最少；
+    并列取序号序列字典序最小）与 `proof[]`（自先者向后者排列的主张链）；
+    未定对 `earlier`／`later` 为 `null`、`claim_count` 为 0、`proof` 为空。
+- 残页文字不参与分析，**文字重叠不算先后证据**。
+- `/api/order-evidence` 返回的闭环与逐对结论和页面「残页次序证据」区完全一致。
+
 交互式接口文档见 http://localhost:8000/docs 。
 
 ## 目录结构
 
 ```
 app/
-  main.py            FastAPI 入口与参数校验（/api/collate、/api/edition、/api/provenance、/api/relationships、/api/alignment-audit、/api/distinguishing-window、/api/block-move、/api/fragments）
+  main.py            FastAPI 入口与参数校验（/api/collate、/api/edition、/api/provenance、/api/relationships、/api/alignment-audit、/api/distinguishing-window、/api/block-move、/api/fragments、/api/order-evidence）
   collation.py       最小编辑距离对齐 + 异文汇总 + 校定稿拼合 + 待鉴来源分段 + 抄本异文距离树 + 最优对齐路径审计 + 最短抄本鉴别片段 + 单次片段搬移定位（对齐结果经共享快照缓存取用）
   fragments.py       残页拼合：被包含／同文页剔除 + 最长后缀—前缀重叠的最短超串（子集 DP，长度→全文字典序→录入序号序列）+ 逐页最早出现区间
+  order_evidence.py  残页次序证据：主张校验（自指／同向重复／未知页名）+ 最短冲突闭环（边数→旋转后主张序号序列字典序）+ DAG 必然先后与最短（序号序列字典序最小）证明链
   aligncache.py      进程内共享对齐快照缓存（(底本, 文本) 为键，8 份 LRU，同键单次计算）
   static/
     index.html       页面（应用入口 http://localhost:8000/）
@@ -417,6 +478,7 @@ app/
 tests/
   test_collation.py  对齐、校勘、校定、来源分段、距离树、路径审计与最短鉴别片段测试（python3 tests/test_collation.py）
   test_fragments.py  残页拼合规则测试（python3 tests/test_fragments.py）
+  test_order_evidence.py 残页次序证据规则测试（python3 tests/test_order_evidence.py）
   test_aligncache.py 对齐快照缓存与缓存下结果一致性测试（python3 tests/test_aligncache.py）
 Dockerfile
 docker-compose.yml   docker compose up --build 即启动应用（端口 8000）

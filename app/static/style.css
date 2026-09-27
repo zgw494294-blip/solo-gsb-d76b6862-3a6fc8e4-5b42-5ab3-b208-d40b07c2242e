@@ -737,3 +737,144 @@ footer {
 .f-assembled { color: var(--accent); }
 .f-contained { color: var(--muted); }
 .f-duplicate { color: #7a5c9e; }
+
+/* ---------- 残页次序证据 ---------- */
+
+.order-box {
+  margin-top: 22px;
+  border-top: 2px solid var(--line);
+  padding-top: 14px;
+}
+
+#claim-list .claim-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  background: #fffaf0;
+}
+
+#claim-list .c-index {
+  font-weight: bold;
+  white-space: nowrap;
+  min-width: 4em;
+}
+
+#claim-list .c-rel {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+#claim-list select.c-before,
+#claim-list select.c-after {
+  flex: 1 1 12em;
+  max-width: 18em;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  background: #fffefb;
+  color: var(--ink);
+}
+
+#claim-list .btn-remove { margin-left: auto; }
+
+.fragment-row.frag-active {
+  border-color: var(--accent);
+  background: #fff5e6;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.claim-row.claim-active {
+  border-color: var(--accent);
+  background: #fff5e6;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.order-result { margin-top: 18px; }
+
+.order-cycle {
+  margin-top: 12px;
+  border: 1px solid var(--error);
+  border-radius: 8px;
+  background: #fbecea;
+  padding: 10px 14px;
+}
+
+.cycle-head {
+  font-weight: bold;
+  color: var(--error);
+  margin-bottom: 8px;
+}
+
+.cycle-chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.cycle-close {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.order-pairs { margin-top: 8px; }
+
+.order-pairs-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.order-pair {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: #fffefb;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.order-pair.pair-ordered { cursor: pointer; }
+.order-pair.pair-ordered:hover { border-color: var(--accent); }
+
+.order-pair .pair-names { font-weight: bold; }
+
+.pair-status { white-space: nowrap; }
+
+.pair-ordered-tag { color: var(--accent); font-size: 0.9rem; }
+.pair-undecided-tag { color: var(--muted); font-size: 0.9rem; }
+
+.pair-proof {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.claim-chip {
+  display: inline-block;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: #fffefb;
+  border-radius: 999px;
+  padding: 1px 12px;
+  white-space: nowrap;
+  user-select: none;
+  font-size: 0.9rem;
+  font-family: ui-monospace, monospace;
+}
+
+.claim-chip:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
